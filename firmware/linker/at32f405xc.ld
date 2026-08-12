@@ -32,11 +32,18 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 
 /* Specify the memory areas */
 BASE_ADDR = 0x08000000;
+
+/* Application region size for in-app firmware updates (IAP). Must match
+   IAP_APP_MAX_SIZE in include/iap.h. Incoming firmware images are staged in
+   FLASH_STAGING before being copied over FLASH by a RAM-resident routine. */
+APP_MAX_SIZE = 0x17000;
+
 MEMORY
 {
-FLASH (rx)      : ORIGIN = BASE_ADDR, LENGTH = WL_BASE_ADDRESS
-FLASH_WL (r)    : ORIGIN = BASE_ADDR + WL_BASE_ADDRESS, LENGTH = FLASH_SIZE - WL_BASE_ADDRESS
-RAM (xrw)       : ORIGIN = 0x20000000, LENGTH = 102K - 4 /* Reserve 4 bytes for bootloader */
+FLASH (rx)         : ORIGIN = BASE_ADDR, LENGTH = APP_MAX_SIZE
+FLASH_STAGING (r)  : ORIGIN = BASE_ADDR + APP_MAX_SIZE, LENGTH = WL_BASE_ADDRESS - APP_MAX_SIZE
+FLASH_WL (r)       : ORIGIN = BASE_ADDR + WL_BASE_ADDRESS, LENGTH = FLASH_SIZE - WL_BASE_ADDRESS
+RAM (xrw)          : ORIGIN = 0x20000000, LENGTH = 102K - 4 /* Reserve 4 bytes for bootloader */
 }
 
 /* Define output sections */
@@ -108,12 +115,19 @@ SECTIONS
   _sidata = LOADADDR(.data);
 
   /* Initialized data sections goes into RAM, load LMA copy after code */
-  .data : 
+  .data :
   {
     . = ALIGN(4);
     _sdata = .;        /* create a global symbol at data start */
     *(.data)           /* .data sections */
     *(.data*)          /* .data* sections */
+
+    /* RAM-resident functions (e.g. the IAP flash apply routine). Placed
+       inside .data so the startup copy loop, which only copies
+       [_sdata, _edata), loads them from flash into RAM. */
+    . = ALIGN(4);
+    *(.ramfunc)
+    *(.ramfunc*)
 
     . = ALIGN(4);
     _edata = .;        /* define a global symbol at data end */
