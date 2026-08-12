@@ -20,6 +20,7 @@
 #include "eeconfig.h"
 #include "hardware/hardware.h"
 #include "hid.h"
+#include "iap.h"
 #include "layout.h"
 #include "macro.h"
 #include "matrix.h"
@@ -73,6 +74,9 @@ int main(void) {
     matrix_scan();
     layout_task();
     xinput_task();
+
+    // Performs a pending firmware update apply (does not return in that case)
+    iap_task();
 
 #ifdef OLED_ENABLED
     oled_display_task();

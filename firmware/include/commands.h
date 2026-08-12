@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "eeconfig.h"
+#include "iap.h"
 #include "usb_descriptors.h"
 
 //--------------------------------------------------------------------+
@@ -42,6 +43,13 @@ typedef enum {
   COMMAND_SAVE_CALIBRATION_THRESHOLD,
   COMMAND_GET_SWITCH_MAP,
   COMMAND_SET_SWITCH_MAP,
+  // In-app firmware update (IAP), see `iap.h` and `docs/iap-protocol.md`.
+  // Unlike older commands, these always echo the command ID back and report
+  // errors via a status byte in the response payload.
+  COMMAND_FW_UPDATE_INIT,
+  COMMAND_FW_UPDATE_WRITE,
+  COMMAND_FW_UPDATE_VERIFY,
+  COMMAND_FW_UPDATE_APPLY,
 
   COMMAND_GET_KEYMAP = 128,
   COMMAND_SET_KEYMAP,
@@ -145,6 +153,21 @@ typedef struct __attribute__((packed)) {
   uint8_t data[60];
 } command_in_set_macro_t;
 
+typedef struct __attribute__((packed)) {
+  uint32_t size;
+  uint32_t crc32;
+} command_in_fw_update_init_t;
+
+typedef struct __attribute__((packed)) {
+  uint32_t offset;
+  uint8_t len;
+  uint8_t data[IAP_CHUNK_SIZE];
+} command_in_fw_update_write_t;
+
+typedef struct __attribute__((packed)) {
+  uint32_t magic;
+} command_in_fw_update_apply_t;
+
 // Command input buffer type
 typedef struct __attribute__((packed)) {
   uint8_t command_id;
@@ -168,6 +191,10 @@ typedef struct __attribute__((packed)) {
 
     command_in_get_macro_t get_macro;
     command_in_set_macro_t set_macro;
+
+    command_in_fw_update_init_t fw_update_init;
+    command_in_fw_update_write_t fw_update_write;
+    command_in_fw_update_apply_t fw_update_apply;
   };
 } command_in_buffer_t;
 
@@ -187,6 +214,28 @@ typedef struct __attribute__((packed)) {
   uint32_t len;
   uint8_t metadata[59];
 } command_out_metadata_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t status;
+  uint8_t chunk_size;
+  uint16_t firmware_version;
+  uint32_t staging_size;
+  uint32_t app_max_size;
+} command_out_fw_update_init_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t status;
+  uint32_t next_offset;
+} command_out_fw_update_write_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t status;
+  uint32_t crc32;
+} command_out_fw_update_verify_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t status;
+} command_out_fw_update_apply_t;
 
 // Command output buffer type
 typedef struct __attribute__((packed)) {
@@ -223,6 +272,15 @@ typedef struct __attribute__((packed)) {
     uint8_t switch_map[63];
     // For `COMMAND_GET_MACRO`
     uint8_t macro[63];
+
+    // For `COMMAND_FW_UPDATE_INIT`
+    command_out_fw_update_init_t fw_update_init;
+    // For `COMMAND_FW_UPDATE_WRITE`
+    command_out_fw_update_write_t fw_update_write;
+    // For `COMMAND_FW_UPDATE_VERIFY`
+    command_out_fw_update_verify_t fw_update_verify;
+    // For `COMMAND_FW_UPDATE_APPLY`
+    command_out_fw_update_apply_t fw_update_apply;
   };
 } command_out_buffer_t;
 
