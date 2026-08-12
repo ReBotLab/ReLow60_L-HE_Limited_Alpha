@@ -81,7 +81,10 @@ uint8_t iap_init(uint32_t image_size, uint32_t image_crc32) {
   if (iap_state == IAP_STATE_APPLYING)
     return IAP_STATUS_ERR_STATE;
 
-  if (image_size < IAP_MIN_IMAGE_SIZE || image_size > IAP_STAGING_SIZE)
+  // The image must hold at least a plausible payload plus the trailing
+  // 16-byte self-verification trailer
+  if (image_size < IAP_MIN_IMAGE_SIZE + IAP_TRAILER_SIZE ||
+      image_size > IAP_STAGING_SIZE)
     return IAP_STATUS_ERR_SIZE;
 
   uint32_t start_sector = 0;
@@ -154,6 +157,12 @@ uint8_t iap_verify(uint32_t *computed_crc32) {
   if (iap_state != IAP_STATE_RECEIVED && iap_state != IAP_STATE_VERIFIED)
     return IAP_STATUS_ERR_STATE;
 
+  // 1. Transfer integrity: hash the whole staged image (payload + trailer)
+  // and compare against the host-supplied value from INIT. This only proves
+  // that the bytes arrived intact; it says nothing about whether the file
+  // itself is a valid firmware image, since the host computed its CRC over
+  // the very same file.
+  //
   // The whole image must be hashed in a single `crc32_compute` call: the
   // hardware implementation resets the CRC unit at the start of each call, so
   // chaining calls is not equivalent to hashing the concatenated input.
@@ -166,7 +175,35 @@ uint8_t iap_verify(uint32_t *computed_crc32) {
     return IAP_STATUS_ERR_CRC;
   }
 
-  // Validate the vector table of the staged image
+  // 2. Image self-verification: the authoritative validity check. The
+  // trailer was appended at build time (`scripts/iap_image.py`), so its
+  // payload CRC32 vouches for the payload independently of anything the
+  // host computed. A file corrupted before the host read it passes the
+  // transfer check above but fails here.
+  const uint32_t payload_size = iap_image_size - IAP_TRAILER_SIZE;
+
+  // The trailer offset is not guaranteed to be word aligned, so copy it out
+  iap_trailer_t trailer;
+  memcpy(&trailer, (const void *)(IAP_STAGING_ADDR + payload_size),
+         sizeof(trailer));
+
+  if (trailer.magic != IAP_TRAILER_MAGIC ||
+      trailer.payload_len != payload_size) {
+    iap_state = IAP_STATE_IDLE;
+    return IAP_STATUS_ERR_IMAGE;
+  }
+
+  const uint32_t payload_crc =
+      crc32_compute((const void *)IAP_STAGING_ADDR, payload_size, 0);
+  if (payload_crc != trailer.payload_crc32) {
+    iap_state = IAP_STATE_IDLE;
+    return IAP_STATUS_ERR_IMAGE;
+  }
+
+  // The trailer version field is informational; downgrades are deliberately
+  // allowed so users can roll back to an older release.
+
+  // 3. Validate the vector table of the staged payload
   const volatile uint32_t *vectors = (const volatile uint32_t *)IAP_STAGING_ADDR;
   const uint32_t initial_sp = vectors[0];
   const uint32_t reset_vector = vectors[1];
@@ -210,8 +247,10 @@ void iap_task(void) {
     return;
 
   iap_apply_pending = false;
-  // Does not return on success (the device resets)
-  if (!iap_hw_apply(iap_image_size))
+  // Copy the payload only: the 16-byte trailer stays in the staging area and
+  // is never written to the application region, so it does not count against
+  // the application size cap. Does not return on success (the device resets).
+  if (!iap_hw_apply(iap_image_size - IAP_TRAILER_SIZE))
     // In-place apply is not supported on this hardware. Nothing has been
     // modified, so simply drop the transfer.
     iap_state = IAP_STATE_IDLE;

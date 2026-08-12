@@ -8,7 +8,12 @@ Reference implementation:
 
 - Firmware: `firmware/include/iap.h`, `firmware/src/iap.c`,
   `firmware/src/hardware/at32f405xx/iap.c`
+- Image generation (build): `firmware/scripts/iap_image.py`
 - Host (ReConf): `src/lib/iap/` and `src/lib/libhmk/commands/fw-update.ts`
+
+IAP transfers use the dedicated image `firmware_iap.bin` (raw application
+binary plus a 16-byte self-verification trailer, see below). The plain
+`firmware.bin` (DFU flashing path) has no trailer and is rejected by VERIFY.
 
 ## Memory map
 
@@ -20,9 +25,12 @@ The AT32F405RCT7 has 256KB of single-bank flash (128 sectors x 2KB).
 | `0x08017000 - 0x0802E000` | 92KB | IAP staging area                     |
 | `0x0802E000 - 0x08040000` | 72KB | Wear leveling backing store (eeconfig) |
 
-A new image is streamed into the staging area, verified there, and then
-copied over the application region by a RAM-resident routine followed by a
-system reset. Images larger than 92KB are rejected at INIT.
+A new image is streamed into the staging area, verified there, and then the
+payload (the image minus its trailer) is copied over the application region
+by a RAM-resident routine followed by a system reset. The trailer is never
+written to the application region; it remains in the staging area, so it
+does not count against the 92KB application cap. Images larger than 92KB
+(payload + trailer) are rejected at INIT.
 
 Because the flash is single-bank, instruction fetch stalls while the flash
 controller erases or programs:
@@ -32,6 +40,54 @@ controller erases or programs:
 - Rewriting the application itself must run from RAM with interrupts
   disabled; USB does not respond during this phase (roughly 1-3 seconds) and
   the device then re-enumerates.
+
+## Image self-verification trailer
+
+### Why a host-computed CRC is not sufficient
+
+The CRC given at INIT is computed by the host over the file the user
+selected. If that file was corrupted *before* the host read it (bad
+download, truncated copy, wrong file), the host and the device both hash
+the same corrupted bytes: the CRCs match and VERIFY passes. This was
+reproduced on hardware — a firmware file with a single flipped byte in the
+middle sailed through VERIFY (the vector table at the head was intact) and
+was applied.
+
+The host-supplied CRC therefore only proves **transfer integrity**
+(host-to-device bytes arrived intact). **Image validity** — "this file is a
+correct ReLow60 firmware image" — must come from information embedded in
+the image itself at build time. That is the trailer's job.
+
+### Trailer format
+
+`firmware_iap.bin` = `[payload][trailer]`, where the payload is the raw
+application binary (identical to `firmware.bin` before the DFU suffix is
+added) and the trailer is 16 bytes, little-endian:
+
+| Offset | Size | Field                                                  |
+| ------ | ---- | ------------------------------------------------------ |
+| 0      | 4    | `magic` — `0x52424649` ("IFBR" as a LE string)         |
+| 4      | 2    | `version` — `FIRMWARE_VERSION` of the payload          |
+| 6      | 2    | `reserved` — 0                                         |
+| 8      | 4    | `payload_len` — payload size in bytes                  |
+| 12     | 4    | `payload_crc32` — CRC32 of the payload (see below)     |
+
+The trailer is appended by the post-build script
+`firmware/scripts/iap_image.py`, which runs after the platform builder adds
+the DFU suffix to `firmware.bin`. The script strips that DFU suffix first,
+so the trailer vouches for the pure application payload:
+
+- `firmware.bin` = payload + DFU suffix — for dfu-util / WebUSB DFU,
+  unchanged.
+- `firmware_iap.bin` = payload + IAP trailer — for the IAP path only.
+
+The `payload_crc32` uses the same AT32 CRC32 definition as the rest of the
+protocol (see "CRC32 definition"), with an initial argument of 0. The
+script self-tests its CRC implementation against the test vectors below on
+every build.
+
+The `version` field is informational only: the firmware does **not** block
+downgrades, since rolling back to an older release is a supported use case.
 
 ## Transport
 
@@ -59,15 +115,21 @@ request/response matching simple.
 | ----- | ------------------------- | -------------------------------------------------- |
 | 0     | `IAP_STATUS_OK`           | Success                                            |
 | 1     | `IAP_STATUS_ERR_STATE`    | Command not valid in the current state             |
-| 2     | `IAP_STATUS_ERR_SIZE`     | Image size < 512 bytes or > staging capacity       |
+| 2     | `IAP_STATUS_ERR_SIZE`     | Image size < 528 bytes (512 min payload + 16 trailer) or > staging capacity |
 | 3     | `IAP_STATUS_ERR_OFFSET`   | WRITE offset != expected sequential offset         |
 | 4     | `IAP_STATUS_ERR_LENGTH`   | WRITE length invalid (0, > chunk size, past image end, or non-final chunk not a multiple of 4) |
 | 5     | `IAP_STATUS_ERR_ERASE`    | Staging sector erase failed (transfer aborted)     |
 | 6     | `IAP_STATUS_ERR_WRITE`    | Staging flash write failed (transfer aborted)      |
-| 7     | `IAP_STATUS_ERR_CRC`      | Staged image CRC32 mismatch (transfer aborted)     |
-| 8     | `IAP_STATUS_ERR_VECTOR`   | Staged image vector table invalid (transfer aborted) |
+| 7     | `IAP_STATUS_ERR_CRC`      | Transfer integrity failure: staged image CRC32 does not match the INIT value (transfer aborted) |
+| 8     | `IAP_STATUS_ERR_VECTOR`   | Staged payload vector table invalid (transfer aborted) |
 | 9     | `IAP_STATUS_ERR_MAGIC`    | APPLY magic mismatch                               |
 | 10    | `IAP_STATUS_ERR_GEOMETRY` | Staging base not aligned to a flash sector         |
+| 11    | `IAP_STATUS_ERR_IMAGE`    | Image self-verification failure: trailer magic missing, `payload_len` inconsistent, or payload CRC32 does not match the trailer (transfer aborted) |
+
+`ERR_CRC` means the bytes were damaged **between** host and device (retry
+may help); `ERR_IMAGE` means the file itself is not a valid IAP image — it
+has no trailer (e.g. a plain `firmware.bin`), or it was corrupted before
+the host read it (retrying with the same file will fail again).
 
 "Transfer aborted" means the state machine returns to idle; the host must
 start over with a new INIT.
@@ -100,8 +162,12 @@ Request:
 | Offset | Size | Field                          |
 | ------ | ---- | ------------------------------ |
 | 0      | 1    | Command ID (18)                |
-| 1      | 4    | `size` — image size in bytes   |
-| 5      | 4    | `crc32` — CRC32 of the image (see below) |
+| 1      | 4    | `size` — total image size in bytes, **including** the 16-byte trailer |
+| 5      | 4    | `crc32` — CRC32 of the whole image including the trailer (see below) |
+
+The `crc32` field is a transfer integrity check only. The authority on
+whether the file is a valid firmware image is the trailer, checked by the
+device during VERIFY.
 
 Response:
 
@@ -146,21 +212,35 @@ Response:
 
 Request: command ID only.
 
-The firmware computes the CRC32 over the staged image (single shot) and
-compares it with the value given at INIT, then validates the vector table:
+The firmware verifies the staged image in this order:
 
-- word 0 (initial stack pointer) must lie within `0x20000000 - 0x20019800`
-  (102KB RAM);
-- word 1 (reset vector) must be a Thumb address (bit 0 set) inside the
-  application region `0x08000000 - 0x08017000`.
+1. **Transfer integrity** — CRC32 over the whole staged image (payload +
+   trailer, single shot) must match the value given at INIT. Failure:
+   `ERR_CRC` (7).
+2. **Image self-verification** — the last 16 bytes are parsed as the
+   trailer:
+   - `magic` must be `0x52424649` ("IFBR"); failure: `ERR_IMAGE` (11);
+   - `payload_len` must equal `size - 16`; failure: `ERR_IMAGE` (11);
+   - CRC32 computed over the payload (first `size - 16` bytes) must match
+     `payload_crc32` from the trailer; failure: `ERR_IMAGE` (11). This is
+     the authoritative validity check: the expected value was embedded at
+     build time, not supplied by the host.
+   - `version` is read but not enforced (downgrades allowed).
+3. **Vector table** of the payload:
+   - word 0 (initial stack pointer) must lie within `0x20000000 - 0x20019800`
+     (102KB RAM);
+   - word 1 (reset vector) must be a Thumb address (bit 0 set) inside the
+     application region `0x08000000 - 0x08017000`.
+
+   Failure: `ERR_VECTOR` (8).
 
 Response:
 
-| Offset | Size | Field                                      |
-| ------ | ---- | ------------------------------------------ |
-| 0      | 1    | Command ID (20)                            |
-| 1      | 1    | Status                                     |
-| 2      | 4    | `crc32` — CRC32 computed over the staging  |
+| Offset | Size | Field                                                    |
+| ------ | ---- | -------------------------------------------------------- |
+| 0      | 1    | Command ID (20)                                          |
+| 1      | 1    | Status                                                   |
+| 2      | 4    | `crc32` — CRC32 computed over the whole staged image     |
 
 ### COMMAND_FW_UPDATE_APPLY (21)
 
@@ -180,8 +260,12 @@ Response:
 
 On `IAP_STATUS_OK` the firmware waits ~250ms (so this response reaches the
 host), then disables all interrupts and runs the RAM-resident routine: erase
-application region, copy staging over it, verify word by word (up to 3
-attempts), system reset. The device drops off the bus and re-enumerates with
+application region, copy the staged **payload** (image minus the 16-byte
+trailer) over it, verify word by word (up to 3 attempts), system reset. The
+trailer stays behind in the staging area and is never written to the
+application region. (Word-granular copying may carry up to 3 trailer bytes
+past a non-word-aligned payload end; these land beyond the application
+image and are inert.) The device drops off the bus and re-enumerates with
 the new firmware. The host should treat the disconnect as expected and wait
 for re-enumeration (suggested timeout: 30 seconds).
 
@@ -254,7 +338,15 @@ FIRMWARE_VERSION                  -->
   responses by echoed command ID, such a request times out on the host side;
   hosts should treat a timeout on INIT as "IAP not supported" and fall back
   to the DFU path.
+- Only `firmware_iap.bin` (with trailer) is accepted by the IAP path. A
+  plain `firmware.bin` — with or without its DFU suffix — has no trailer
+  and fails VERIFY with `ERR_IMAGE`. Hosts should additionally check for
+  the trailer magic before starting a transfer and tell the user to pick
+  `firmware_iap.bin`.
 - The linker now caps the application at 92KB (previously 184KB). The current
-  application is ~42KB. If the application ever outgrows 92KB, the partition
-  scheme (and this protocol's capacities) must be revised.
-- The WebUSB DFU update path is unchanged and remains the recovery mechanism.
+  application is ~42KB. Since the staging area is also 92KB and the IAP image
+  carries a 16-byte trailer, the effective IAP payload cap is 92KB - 16
+  bytes. If the application ever outgrows that, the partition scheme (and
+  this protocol's capacities) must be revised.
+- The WebUSB DFU update path is unchanged (it uses the trailer-less
+  `firmware.bin`) and remains the recovery mechanism.
