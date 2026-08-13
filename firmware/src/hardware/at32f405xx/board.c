@@ -257,6 +257,10 @@ uint32_t board_serial(char *buf) {
 
 uint32_t board_cycle_count(void) { return DWT->CYCCNT; }
 
+uint32_t board_usb_frame_number(void) {
+  return OTG_DEVICE(otg_global)->dsts_bit.soffn;
+}
+
 //--------------------------------------------------------------------+
 // Interrupt Handlers
 //--------------------------------------------------------------------+

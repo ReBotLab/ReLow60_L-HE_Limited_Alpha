@@ -18,12 +18,17 @@
 #include "commands.h"
 #include "keycodes.h"
 #include "matrix.h"
+#include "polling_test.h"
 #include "tusb.h"
 #include "usb_descriptors.h"
 
 // Track how many keys are currently in the 6KRO part of the report
 static uint8_t num_6kro_keys;
 static hid_nkro_kb_report_t kb_report;
+// Last keyboard report handed to the USB stack, used to suppress unchanged
+// reports. File-scope so that `hid_keyboard_invalidate_cache()` can force the
+// next report through.
+static hid_nkro_kb_report_t prev_kb_report;
 
 static uint16_t system_report;
 static uint16_t consumer_report;
@@ -38,8 +43,6 @@ static hid_mouse_report_t mouse_report;
  * @return None
  */
 static void hid_send_keyboard_report(void) {
-  static hid_nkro_kb_report_t prev_kb_report = {0};
-
   if (memcmp(&prev_kb_report, &kb_report, sizeof(prev_kb_report)) == 0)
     // Don't send the report if it hasn't changed
     return;
@@ -197,6 +200,18 @@ void hid_keycode_remove(uint8_t keycode) {
 
 uint8_t hid_get_modifiers(void) { return kb_report.modifiers; }
 
+bool hid_keyboard_is_idle(void) {
+  static const hid_nkro_kb_report_t empty_report = {0};
+
+  return memcmp(&kb_report, &empty_report, sizeof(empty_report)) == 0;
+}
+
+void hid_keyboard_invalidate_cache(void) {
+  // `reserved` is never set by a genuine report, so this can never compare
+  // equal to `kb_report` and forces exactly one resynchronizing report.
+  prev_kb_report.reserved = 0xFF;
+}
+
 void hid_send_reports(void) {
 #if !defined(HID_DISABLED)
   if (tud_suspended())
@@ -237,7 +252,24 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id,
 
 void tud_hid_report_complete_cb(uint8_t instance, const uint8_t *report,
                                 uint16_t len) {
-  if (instance == USB_ITF_HID)
+  switch (instance) {
+  case USB_ITF_KEYBOARD:
+    // Only does anything while the USB polling self-test owns the main loop
+    polling_test_on_complete();
+    break;
+
+  case USB_ITF_HID:
     // Start from the next report ID
     hid_send_hid_report(report[0] + 1);
+    break;
+
+  default:
+    break;
+  }
+}
+
+void tud_hid_report_failed_cb(uint8_t instance, hid_report_type_t report_type,
+                              const uint8_t *report, uint16_t xferred_bytes) {
+  if (instance == USB_ITF_KEYBOARD && report_type == HID_REPORT_TYPE_INPUT)
+    polling_test_on_failed();
 }

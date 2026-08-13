@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "eeconfig.h"
+#include "polling_test.h"
 #include "usb_descriptors.h"
 
 //--------------------------------------------------------------------+
@@ -42,6 +43,7 @@ typedef enum {
   COMMAND_SAVE_CALIBRATION_THRESHOLD,
   COMMAND_GET_SWITCH_MAP,
   COMMAND_SET_SWITCH_MAP,
+  COMMAND_POLLING_TEST,
 
   COMMAND_GET_KEYMAP = 128,
   COMMAND_SET_KEYMAP,
@@ -136,6 +138,13 @@ typedef struct __attribute__((packed)) {
 } command_in_gamepad_options_t;
 
 typedef struct __attribute__((packed)) {
+  // `polling_test_subcmd_t`
+  uint8_t subcommand;
+  // Only used by `POLLING_TEST_SUBCMD_START`
+  uint16_t window_ms;
+} command_in_polling_test_t;
+
+typedef struct __attribute__((packed)) {
   uint16_t offset;
 } command_in_get_macro_t;
 
@@ -165,6 +174,7 @@ typedef struct __attribute__((packed)) {
 
     command_in_get_switch_map_t get_switch_map;
     command_in_set_switch_map_t set_switch_map;
+    command_in_polling_test_t polling_test;
 
     command_in_get_macro_t get_macro;
     command_in_set_macro_t set_macro;
@@ -221,6 +231,8 @@ typedef struct __attribute__((packed)) {
     gamepad_options_t gamepad_options;
     // For `COMMAND_GET_SWITCH_MAP`
     uint8_t switch_map[63];
+    // For `COMMAND_POLLING_TEST`
+    polling_test_result_t polling_test;
     // For `COMMAND_GET_MACRO`
     uint8_t macro[63];
   };

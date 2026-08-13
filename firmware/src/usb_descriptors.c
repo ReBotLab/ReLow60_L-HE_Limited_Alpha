@@ -226,6 +226,21 @@ static const uint8_t desc_ms_os_20[] = {
 _Static_assert(M_ARRAY_SIZE(desc_ms_os_20) == MS_OS_20_DESC_LEN,
                "Invalid Microsoft OS 2.0 descriptor size");
 
+uint8_t usb_descriptors_polling_interval(void) {
+#if defined(BOARD_USB_HS)
+  // For high-speed interrupt endpoints `bInterval` is an exponent: the polling
+  // period is 2^(bInterval - 1) microframes of 125us each (USB 2.0 section
+  // 9.6.6). `polling_rate_t` is defined as `bInterval - 1`, so 8kHz is 1, 1kHz
+  // is 4, and 125Hz is 7.
+  if (eeconfig->options.polling_rate < POLLING_RATE_COUNT)
+    return (uint8_t)(eeconfig->options.polling_rate + 1);
+#endif
+
+  // On full speed `bInterval` is the polling period in 1ms frames, so 1 is the
+  // fastest the endpoint can be polled.
+  return 1;
+}
+
 //--------------------------------------------------------------------+
 // TinyUSB Callbacks
 //--------------------------------------------------------------------+
@@ -248,13 +263,7 @@ static void generate_desc_configuration(uint8_t *dst) {
     total_length -= XINPUT_DESC_LEN;
   }
 
-  uint8_t polling_interval = 1;
-#if defined(BOARD_USB_HS)
-  if (!eeconfig->options.high_polling_rate_enabled)
-    // If high polling rate is not enabled, use 1kHz polling rate = 8 frames for
-    // USB HS instead.
-    polling_interval = 8;
-#endif
+  const uint8_t polling_interval = usb_descriptors_polling_interval();
 
   const uint8_t src[] = {
       // Configuration descriptor header. Request maximum 500mA for the device

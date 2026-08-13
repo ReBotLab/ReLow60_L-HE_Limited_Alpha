@@ -46,6 +46,10 @@ static bool v1_8_global_config_func(uint8_t *dst, const uint8_t *src);
 static bool v1_8_profile_config_func(uint8_t profile, uint8_t *dst,
                                      const uint8_t *src);
 
+static bool v1_9_global_config_func(uint8_t *dst, const uint8_t *src);
+static bool v1_9_profile_config_func(uint8_t profile, uint8_t *dst,
+                                     const uint8_t *src);
+
 // Migration metadata for each configuration version. The first entry is
 // reserved for the initial version (v1.0) which does not require migration.
 static const migration_t migrations[] = {
@@ -166,6 +170,24 @@ static const migration_t migrations[] = {
         ,
         .global_config_func = v1_8_global_config_func,
         .profile_config_func = v1_8_profile_config_func,
+    },
+    {
+        .version = 0x0109,
+        .global_config_size = 14                  // Other fields
+                              + 1                 // Bottom-out dead zone
+                              + NUM_KEYS * 2      // Bottom-out threshold
+                              + NUM_KEYS          // Switch map
+                              + MACRO_BUFFER_SIZE // Macro buffer
+        ,
+        .profile_config_size = NUM_LAYERS * NUM_KEYS    // Keymap
+                               + NUM_KEYS * 4           // Actuation map
+                               + NUM_ADVANCED_KEYS * 12 // Advanced keys
+                               + NUM_KEYS               // Gamepad buttons
+                               + 9                      // Gamepad options
+                               + 1                      // Tick rate
+        ,
+        .global_config_func = v1_9_global_config_func,
+        .profile_config_func = v1_9_profile_config_func,
     },
 };
 
@@ -474,6 +496,45 @@ bool v1_8_global_config_func(uint8_t *dst, const uint8_t *src) {
 }
 
 bool v1_8_profile_config_func(uint8_t profile, uint8_t *dst,
+                              const uint8_t *src) {
+  // Copy the entire profile (unchanged)
+  migration_memcpy(&dst, &src,
+                   NUM_LAYERS * NUM_KEYS + NUM_KEYS * 4 +
+                       NUM_ADVANCED_KEYS * 12 + NUM_KEYS + 9 + 1);
+
+  return true;
+}
+
+//--------------------------------------------------------------------+
+// v1.8 -> v1.9 Migration (polling rate flag -> 3-bit field)
+//--------------------------------------------------------------------+
+
+bool v1_9_global_config_func(uint8_t *dst, const uint8_t *src) {
+  if (((eeconfig_t *)src)->version != 0x0108)
+    // Expected version v1.8
+    return false;
+
+  // Copy `magic_start` through `switch_map` (11 fixed bytes + bottom-out
+  // threshold + switch map).
+  migration_memcpy(&dst, &src, 11 + NUM_KEYS * 2 + NUM_KEYS);
+  // Bit 2 of `options` used to be the single-bit `high_polling_rate_enabled`
+  // and is now the low bit of the 3-bit `polling_rate` field. Map the old flag
+  // onto the matching enumerator and clear the previously reserved bits.
+  uint16_t options;
+  memcpy(&options, src, sizeof(options));
+  src += sizeof(options);
+  const uint16_t polling_rate = (options & 0x0004u)
+                                    ? (uint16_t)POLLING_RATE_8000HZ
+                                    : (uint16_t)POLLING_RATE_1000HZ;
+  migration_assign_uint16_t(
+      &dst, (uint16_t)((options & 0x0003u) | (uint16_t)(polling_rate << 2)));
+  // Copy `current_profile` through `macros`
+  migration_memcpy(&dst, &src, 2 + MACRO_BUFFER_SIZE);
+
+  return true;
+}
+
+bool v1_9_profile_config_func(uint8_t profile, uint8_t *dst,
                               const uint8_t *src) {
   // Copy the entire profile (unchanged)
   migration_memcpy(&dst, &src,

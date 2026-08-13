@@ -116,3 +116,17 @@ _Static_assert(sizeof(hid_nkro_kb_report_t) < CFG_TUD_HID_EP_BUFSIZE,
 // buffer is full, resulting in missed reports.
 _Static_assert(RAW_HID_EP_SIZE == CFG_TUD_HID_EP_BUFSIZE,
                "Invalid Raw HID report size");
+
+//--------------------------------------------------------------------+
+// USB Descriptors API
+//--------------------------------------------------------------------+
+
+/**
+ * @brief Get the `bInterval` used by the interrupt endpoints
+ *
+ * The value is taken from the persistent configuration and is therefore only
+ * applied to the descriptors on the next enumeration.
+ *
+ * @return `bInterval` as encoded in the configuration descriptor
+ */
+uint8_t usb_descriptors_polling_interval(void);

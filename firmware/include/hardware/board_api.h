@@ -90,3 +90,22 @@ bool board_factory_reset_requested(void);
  * @return Current cycle count
  */
 uint32_t board_cycle_count(void);
+
+/**
+ * @brief Get the current USB frame number
+ *
+ * This function returns the frame number counter maintained in hardware by the
+ * USB peripheral. The counter is incremented on every SOF packet received from
+ * the host, which is once per 125us microframe on USB HS and once per 1ms frame
+ * on USB FS. It is therefore a jitter-free time base for measuring how well the
+ * host keeps up with the endpoint polling interval.
+ *
+ * The counter is 14 bits wide and wraps around, so callers must mask the
+ * difference between two samples with `USB_FRAME_NUMBER_MASK`.
+ *
+ * @return Current USB frame number
+ */
+uint32_t board_usb_frame_number(void);
+
+// The USB frame number counter is 14 bits wide
+#define USB_FRAME_NUMBER_MASK 0x3FFF

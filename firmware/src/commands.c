@@ -29,6 +29,10 @@
     break;                                                                     \
   }
 
+// Give up on sending a response after this long. Only reachable if the host
+// stops polling the raw HID interface, which happens on unplug or suspend.
+#define COMMAND_RESPONSE_TIMEOUT_CYCLES ((F_CPU / 1000u) * 100u)
+
 static uint8_t out_buf[RAW_HID_EP_SIZE];
 static const uint8_t keyboard_metadata[] = {KEYBOARD_METADATA};
 
@@ -37,6 +41,10 @@ void command_init(void) {}
 void command_process(const uint8_t *buf) {
   const command_in_buffer_t *in = (const command_in_buffer_t *)buf;
   command_out_buffer_t *out = (command_out_buffer_t *)out_buf;
+
+  // The buffer is reused across commands, so clear it to keep the bytes a
+  // command does not write from leaking the previous response.
+  memset(out_buf, 0, sizeof(out_buf));
 
   bool success = true;
   switch (in->command_id) {
@@ -91,7 +99,20 @@ void command_process(const uint8_t *buf) {
     out->options = eeconfig->options;
     break;
   }
+  case COMMAND_POLLING_TEST: {
+    const command_in_polling_test_t *p = &in->polling_test;
+
+    COMMAND_VERIFY(p->subcommand < POLLING_TEST_SUBCMD_COUNT);
+
+    polling_test_command(p->subcommand, p->window_ms, &out->polling_test);
+    break;
+  }
   case COMMAND_SET_OPTIONS: {
+    // The 3-bit `polling_rate` field can hold values that have no matching
+    // enumerator, which would be written into the descriptor as an out-of-range
+    // `bInterval`.
+    COMMAND_VERIFY(in->options.polling_rate < POLLING_RATE_COUNT);
+
     success = EECONFIG_WRITE(options, &in->options);
     break;
   }
@@ -345,8 +366,15 @@ void command_process(const uint8_t *buf) {
   // Echo the command ID back to the host if successful
   out->command_id = success ? in->command_id : COMMAND_UNKNOWN;
 
-  while (!tud_hid_n_ready(USB_ITF_RAW_HID))
+  const uint32_t start_cycles = board_cycle_count();
+  while (!tud_hid_n_ready(USB_ITF_RAW_HID)) {
+    if (board_cycle_count() - start_cycles > COMMAND_RESPONSE_TIMEOUT_CYCLES)
+      // The host went away. Dropping the response is recoverable, spinning here
+      // forever is not.
+      return;
+
     // Wait for the raw HID interface to be ready
     tud_task();
+  }
   tud_hid_n_report(USB_ITF_RAW_HID, 0, out_buf, RAW_HID_EP_SIZE);
 }

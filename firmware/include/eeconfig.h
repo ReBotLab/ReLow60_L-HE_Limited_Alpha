@@ -59,17 +59,39 @@ typedef struct __attribute__((packed)) {
   uint8_t bottom_out_deadzone;
 } eeconfig_calibration_t;
 
+// USB polling rate. Only applicable if USB HS is enabled; USB FS is always
+// polled at 1kHz.
+//
+// For high-speed interrupt endpoints the descriptor's `bInterval` is an
+// exponent: the polling period is 2^(bInterval - 1) microframes of 125us each
+// (USB 2.0 section 9.6.6). The enumerators are therefore defined as
+// `bInterval - 1` so that the descriptor value is simply `polling_rate + 1`.
+//
+// The default must stay 0 so that a zero-initialized configuration keeps the
+// highest polling rate, matching the behavior before this field existed.
+typedef enum {
+  POLLING_RATE_8000HZ = 0,
+  POLLING_RATE_4000HZ,
+  POLLING_RATE_2000HZ,
+  POLLING_RATE_1000HZ,
+  POLLING_RATE_500HZ,
+  POLLING_RATE_250HZ,
+  POLLING_RATE_125HZ,
+
+  POLLING_RATE_COUNT,
+} polling_rate_t;
+
 // Keyboard options configuration
 typedef union __attribute__((packed)) {
   struct __attribute__((packed)) {
     // Whether the XInput interface is enabled
     bool xinput_enabled : 1;
     bool _unused0 : 1;
-    // Whether 8kHz polling rate is enabled. Only applicable if USB HS is
-    // enabled. If disabled, the 1kHz polling rate is used instead.
-    bool high_polling_rate_enabled : 1;
+    // USB polling rate (`polling_rate_t`). Replaces the single-bit
+    // `high_polling_rate_enabled` flag used up to configuration version 0x0108.
+    uint16_t polling_rate : 3;
     // Reserved bits for future use
-    uint16_t reserved : 13;
+    uint16_t reserved : 11;
   };
   uint16_t raw;
 } eeconfig_options_t;
@@ -90,7 +112,7 @@ typedef struct __attribute__((packed)) {
 // Persistent configuration version. The size of the configuration must be
 // non-decreasing, so that the migration can assume that the new version is at
 // least as large as the previous version.
-#define EECONFIG_VERSION 0x0108
+#define EECONFIG_VERSION 0x0109
 
 // Keyboard configuration
 // Whenever there is a change in the configuration, `EECONFIG_VERSION` must be
@@ -148,7 +170,7 @@ extern const eeconfig_t *eeconfig;
 #define DEFAULT_OPTIONS                                                        \
   {                                                                            \
       .xinput_enabled = false,                                                 \
-      .high_polling_rate_enabled = true,                                       \
+      .polling_rate = POLLING_RATE_8000HZ,                                     \
   }
 #endif
 
