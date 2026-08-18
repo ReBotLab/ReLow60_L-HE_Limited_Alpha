@@ -166,6 +166,10 @@ void hid_keycode_remove(uint8_t keycode) {
       if (kb_report.keycodes[i] == hid_code) {
         for (uint32_t j = i; j < 5; j++)
           kb_report.keycodes[j] = kb_report.keycodes[j + 1];
+        // The array shrank by one, so the slot the shift vacated has to be
+        // cleared. Leaving it holds a phantom key in the 6KRO part of the
+        // report for as long as the slot is not written again.
+        kb_report.keycodes[5] = 0;
         num_6kro_keys--;
         break;
       }
