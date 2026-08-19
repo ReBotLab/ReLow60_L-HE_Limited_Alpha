@@ -17,6 +17,7 @@
 
 #include "advanced_keys.h"
 #include "hardware/hardware.h"
+#include "iap.h"
 #include "layout.h"
 #include "matrix.h"
 #include "metadata.h"
@@ -225,6 +226,49 @@ void command_process(const uint8_t *buf) {
 
     success = EECONFIG_WRITE_N(macros[p->offset], p->data,
                                sizeof(uint8_t) * p->len);
+    break;
+  }
+    //--------------------------------------------------------------------+
+    // In-app firmware update (IAP) commands
+    //
+    // These always echo the command ID back; errors are reported via the
+    // status byte in the response payload instead of `COMMAND_UNKNOWN`.
+    //--------------------------------------------------------------------+
+  case COMMAND_FW_UPDATE_INIT: {
+    const command_in_fw_update_init_t *p = &in->fw_update_init;
+    command_out_fw_update_init_t *o = &out->fw_update_init;
+
+    o->status = iap_init(p->size, p->crc32);
+    o->chunk_size = IAP_CHUNK_SIZE;
+    o->firmware_version = FIRMWARE_VERSION;
+    o->staging_size = IAP_STAGING_SIZE;
+    o->app_max_size = IAP_APP_MAX_SIZE;
+    break;
+  }
+  case COMMAND_FW_UPDATE_WRITE: {
+    const command_in_fw_update_write_t *p = &in->fw_update_write;
+    command_out_fw_update_write_t *o = &out->fw_update_write;
+
+    uint32_t next_offset = 0;
+    o->status = iap_write(p->offset, p->data, p->len, &next_offset);
+    o->next_offset = next_offset;
+    break;
+  }
+  case COMMAND_FW_UPDATE_VERIFY: {
+    command_out_fw_update_verify_t *o = &out->fw_update_verify;
+
+    uint32_t computed_crc32 = 0;
+    o->status = iap_verify(&computed_crc32);
+    o->crc32 = computed_crc32;
+    break;
+  }
+  case COMMAND_FW_UPDATE_APPLY: {
+    const command_in_fw_update_apply_t *p = &in->fw_update_apply;
+    command_out_fw_update_apply_t *o = &out->fw_update_apply;
+
+    // The actual flash operation runs from `iap_task` after a short delay so
+    // that this response can reach the host first. The device then resets.
+    o->status = iap_apply_request(p->magic);
     break;
   }
     //--------------------------------------------------------------------+

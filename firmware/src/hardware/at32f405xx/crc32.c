@@ -18,7 +18,21 @@
 #include "at32f402_405.h"
 #include "hardware/hardware.h"
 
-void crc32_init(void) { crm_periph_clock_enable(CRM_CRC_PERIPH_CLOCK, TRUE); }
+void crc32_init(void) {
+  crm_periph_clock_enable(CRM_CRC_PERIPH_CLOCK, TRUE);
+
+  // Pin the CRC unit configuration explicitly instead of relying on reset
+  // defaults, since the host-side IAP client (ReConf) replicates exactly this
+  // configuration in software: polynomial 0x04C11DB7 (32-bit, MSB first), no
+  // input/output bit reversal, initial value 0xFFFFFFFF loaded on
+  // `crc_data_reset`. Values match the peripheral reset defaults, so CRC32s
+  // stored by older firmware (e.g. wear leveling checksums) are unaffected.
+  crc_poly_value_set(0x04C11DB7);
+  crc_poly_size_set(CRC_POLY_SIZE_32B);
+  crc_reverse_input_data_set(CRC_REVERSE_INPUT_NO_AFFECTE);
+  crc_reverse_output_data_set(CRC_REVERSE_OUTPUT_NO_AFFECTE);
+  crc_init_data_set(0xFFFFFFFF);
+}
 
 uint32_t crc32_compute(const void *buf, uint32_t len, uint32_t crc) {
   const uint8_t *buf8 = buf;
