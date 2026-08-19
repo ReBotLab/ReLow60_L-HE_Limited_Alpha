@@ -43,7 +43,11 @@ typedef enum {
   COMMAND_SAVE_CALIBRATION_THRESHOLD,
   COMMAND_GET_SWITCH_MAP,
   COMMAND_SET_SWITCH_MAP,
-  COMMAND_POLLING_TEST,
+  // 18-21 are reserved for the in-app firmware update commands
+  // (`COMMAND_FW_UPDATE_INIT` .. `APPLY`), which are developed on a separate
+  // branch. Numbered explicitly so that the two can be merged in either order
+  // without silently shifting the wire protocol.
+  COMMAND_POLLING_TEST = 22,
 
   COMMAND_GET_KEYMAP = 128,
   COMMAND_SET_KEYMAP,
