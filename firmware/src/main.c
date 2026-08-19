@@ -20,10 +20,12 @@
 #include "eeconfig.h"
 #include "hardware/hardware.h"
 #include "hid.h"
+#include "iap.h"
 #include "layout.h"
 #include "macro.h"
 #include "matrix.h"
 #include "measurement.h"
+#include "polling_test.h"
 #ifdef OLED_ENABLED
 #include "oled_display.h"
 #endif
@@ -58,6 +60,7 @@ int main(void) {
   xinput_init();
   layout_init();
   command_init();
+  polling_test_init();
 
   tud_init(BOARD_TUD_RHPORT);
 
@@ -67,12 +70,21 @@ int main(void) {
 
   while (1) {
     tud_task();
+
+    if (polling_test_task())
+      // The USB polling self-test owns the loop. Skipping the scan tasks keeps
+      // the firmware from being the bottleneck in its own measurement.
+      continue;
+
     measurement_task();
 
     analog_task();
     matrix_scan();
     layout_task();
     xinput_task();
+
+    // Performs a pending firmware update apply (does not return in that case)
+    iap_task();
 
 #ifdef OLED_ENABLED
     oled_display_task();

@@ -54,6 +54,24 @@ void hid_keycode_remove(uint8_t keycode);
 uint8_t hid_get_modifiers(void);
 
 /**
+ * @brief Check whether the keyboard report is empty
+ *
+ * @return true if no key or modifier is currently reported as pressed
+ */
+bool hid_keyboard_is_idle(void);
+
+/**
+ * @brief Invalidate the cached keyboard report
+ *
+ * Unchanged keyboard reports are normally suppressed. Call this after sending
+ * keyboard reports outside of `hid_send_reports()` to force the next report
+ * through, so that the host is resynchronized with the actual key state.
+ *
+ * @return None
+ */
+void hid_keyboard_invalidate_cache(void);
+
+/**
  * @brief Send all HID reports
  *
  * This function will block until the device is ready to send the reports.

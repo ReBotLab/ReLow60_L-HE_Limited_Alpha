@@ -17,6 +17,7 @@
 
 #include "hardware/hardware.h"
 #include "matrix.h"
+#include "polling_test.h"
 #include "tusb.h"
 
 #include "at32f402_405.h"
@@ -42,7 +43,11 @@ enum {
   MEAS_AVG_CAPTURE,
   MEAS_LOOPTIME,
   MEAS_STREAM,
+  MEAS_POLLING,
 };
+
+// Window used by the `polling` command
+#define MEASUREMENT_POLLING_WINDOW_MS 500
 
 static uint8_t meas_state = MEAS_IDLE;
 static uint8_t current_key;
@@ -171,6 +176,21 @@ static void process_command(const char *cmd) {
     sample_idx = 0;
     looptime_last_cyc = DWT->CYCCNT;
     meas_state = MEAS_LOOPTIME;
+  } else if (strcmp(cmd, "polling") == 0) {
+    polling_test_result_t r;
+    polling_test_command(POLLING_TEST_SUBCMD_START,
+                         MEASUREMENT_POLLING_WINDOW_MS, &r);
+    if (r.status != POLLING_TEST_STATUS_RUNNING) {
+      char line[64];
+      snprintf(line, sizeof(line), "# Could not start (status %d)\r\n",
+               r.status);
+      cdc_print(line);
+      cdc_flush();
+      return;
+    }
+    cdc_print("# USB polling measurement\r\n");
+    cdc_flush();
+    meas_state = MEAS_POLLING;
   } else if (strcmp(cmd, "help") == 0) {
     cdc_print("# Commands:\r\n");
     cdc_print("#   noise    - capture 1000 ADC samples per key (CSV)\r\n");
@@ -178,6 +198,7 @@ static void process_command(const char *cmd) {
     cdc_print("#   avg      - 100-sample average per key (mean/min/max/stdev)\r\n");
     cdc_print("#   stream N - continuous ADC output for key N (Enter to stop)\r\n");
     cdc_print("#   looptime - measure main loop timing (1000 iterations)\r\n");
+    cdc_print("#   polling  - measure USB polling rate (500 ms window)\r\n");
     cdc_print("#   status   - show current ADC values\r\n");
     cdc_print("#   help     - show this message\r\n");
     cdc_flush();
@@ -377,6 +398,65 @@ void measurement_task(void) {
       cdc_flush();
       meas_state = MEAS_IDLE;
     }
+    break;
+  }
+
+  case MEAS_POLLING: {
+    polling_test_result_t r;
+    polling_test_command(POLLING_TEST_SUBCMD_POLL, 0, &r);
+    if (r.status == POLLING_TEST_STATUS_RUNNING)
+      // Still measuring. This state is not reached while the window is in
+      // progress anyway, since the polling test owns the main loop.
+      break;
+
+    char line[80];
+    if (r.status != POLLING_TEST_STATUS_DONE) {
+      snprintf(line, sizeof(line), "# aborted: status %d\r\n", r.status);
+      cdc_print(line);
+      cdc_flush();
+      meas_state = MEAS_IDLE;
+      break;
+    }
+
+    const uint32_t rate =
+        r.elapsed_us > 0
+            ? (uint32_t)((uint64_t)r.report_count * 1000000u / r.elapsed_us)
+            : 0;
+    const uint32_t tick_ns =
+        r.link_speed == POLLING_TEST_LINK_HIGH_SPEED ? 125000u : 1000000u;
+
+    snprintf(line, sizeof(line), "# link: %s, bInterval: %d, target: %d Hz\r\n",
+             r.link_speed == POLLING_TEST_LINK_HIGH_SPEED ? "HS" : "FS",
+             r.b_interval, r.target_rate_hz);
+    cdc_print(line);
+    snprintf(line, sizeof(line), "# rate: %lu Hz (%lu reports / %lu us)\r\n",
+             (unsigned long)rate, (unsigned long)r.report_count,
+             (unsigned long)r.elapsed_us);
+    cdc_print(line);
+    snprintf(line, sizeof(line), "# sof: %lu ticks (expected %lu)\r\n",
+             (unsigned long)r.sof_count,
+             (unsigned long)((uint64_t)r.elapsed_us * 1000u / tick_ns));
+    cdc_print(line);
+    snprintf(line, sizeof(line), "# gap: min %d, max %d ticks\r\n", r.min_gap,
+             r.max_gap);
+    cdc_print(line);
+    snprintf(line, sizeof(line), "# hist: %d %d %d %d %d %d\r\n", r.buckets[0],
+             r.buckets[1], r.buckets[2], r.buckets[3], r.buckets[4],
+             r.buckets[5]);
+    cdc_print(line);
+    snprintf(line, sizeof(line), "# failed: %d\r\n", r.failed);
+    cdc_print(line);
+    snprintf(line, sizeof(line),
+             "# loop: %lu iters, max %lu cyc, rearm max %lu cyc\r\n",
+             (unsigned long)r.loop_count, (unsigned long)r.loop_max_cycles,
+             (unsigned long)r.send_max_cycles);
+    cdc_print(line);
+    snprintf(line, sizeof(line), "# budget: %lu cyc per poll\r\n",
+             (unsigned long)(r.target_rate_hz > 0 ? F_CPU / r.target_rate_hz
+                                                  : 0));
+    cdc_print(line);
+    cdc_flush();
+    meas_state = MEAS_IDLE;
     break;
   }
 

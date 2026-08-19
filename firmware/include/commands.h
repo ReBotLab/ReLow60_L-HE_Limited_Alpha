@@ -17,6 +17,8 @@
 
 #include "common.h"
 #include "eeconfig.h"
+#include "iap.h"
+#include "polling_test.h"
 #include "usb_descriptors.h"
 
 //--------------------------------------------------------------------+
@@ -42,6 +44,17 @@ typedef enum {
   COMMAND_SAVE_CALIBRATION_THRESHOLD,
   COMMAND_GET_SWITCH_MAP,
   COMMAND_SET_SWITCH_MAP,
+  // In-app firmware update (IAP), see `iap.h` and `docs/iap-protocol.md`.
+  // Unlike older commands, these always echo the command ID back and report
+  // errors via a status byte in the response payload. These occupy 18-21.
+  COMMAND_FW_UPDATE_INIT,
+  COMMAND_FW_UPDATE_WRITE,
+  COMMAND_FW_UPDATE_VERIFY,
+  COMMAND_FW_UPDATE_APPLY,
+
+  // Numbered explicitly so that the polling test and the IAP commands can be
+  // merged in either order without silently shifting the wire protocol.
+  COMMAND_POLLING_TEST = 22,
 
   COMMAND_GET_KEYMAP = 128,
   COMMAND_SET_KEYMAP,
@@ -136,6 +149,13 @@ typedef struct __attribute__((packed)) {
 } command_in_gamepad_options_t;
 
 typedef struct __attribute__((packed)) {
+  // `polling_test_subcmd_t`
+  uint8_t subcommand;
+  // Only used by `POLLING_TEST_SUBCMD_START`
+  uint16_t window_ms;
+} command_in_polling_test_t;
+
+typedef struct __attribute__((packed)) {
   uint16_t offset;
 } command_in_get_macro_t;
 
@@ -144,6 +164,21 @@ typedef struct __attribute__((packed)) {
   uint8_t len;
   uint8_t data[60];
 } command_in_set_macro_t;
+
+typedef struct __attribute__((packed)) {
+  uint32_t size;
+  uint32_t crc32;
+} command_in_fw_update_init_t;
+
+typedef struct __attribute__((packed)) {
+  uint32_t offset;
+  uint8_t len;
+  uint8_t data[IAP_CHUNK_SIZE];
+} command_in_fw_update_write_t;
+
+typedef struct __attribute__((packed)) {
+  uint32_t magic;
+} command_in_fw_update_apply_t;
 
 // Command input buffer type
 typedef struct __attribute__((packed)) {
@@ -165,9 +200,14 @@ typedef struct __attribute__((packed)) {
 
     command_in_get_switch_map_t get_switch_map;
     command_in_set_switch_map_t set_switch_map;
+    command_in_polling_test_t polling_test;
 
     command_in_get_macro_t get_macro;
     command_in_set_macro_t set_macro;
+
+    command_in_fw_update_init_t fw_update_init;
+    command_in_fw_update_write_t fw_update_write;
+    command_in_fw_update_apply_t fw_update_apply;
   };
 } command_in_buffer_t;
 
@@ -187,6 +227,28 @@ typedef struct __attribute__((packed)) {
   uint32_t len;
   uint8_t metadata[59];
 } command_out_metadata_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t status;
+  uint8_t chunk_size;
+  uint16_t firmware_version;
+  uint32_t staging_size;
+  uint32_t app_max_size;
+} command_out_fw_update_init_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t status;
+  uint32_t next_offset;
+} command_out_fw_update_write_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t status;
+  uint32_t crc32;
+} command_out_fw_update_verify_t;
+
+typedef struct __attribute__((packed)) {
+  uint8_t status;
+} command_out_fw_update_apply_t;
 
 // Command output buffer type
 typedef struct __attribute__((packed)) {
@@ -221,8 +283,19 @@ typedef struct __attribute__((packed)) {
     gamepad_options_t gamepad_options;
     // For `COMMAND_GET_SWITCH_MAP`
     uint8_t switch_map[63];
+    // For `COMMAND_POLLING_TEST`
+    polling_test_result_t polling_test;
     // For `COMMAND_GET_MACRO`
     uint8_t macro[63];
+
+    // For `COMMAND_FW_UPDATE_INIT`
+    command_out_fw_update_init_t fw_update_init;
+    // For `COMMAND_FW_UPDATE_WRITE`
+    command_out_fw_update_write_t fw_update_write;
+    // For `COMMAND_FW_UPDATE_VERIFY`
+    command_out_fw_update_verify_t fw_update_verify;
+    // For `COMMAND_FW_UPDATE_APPLY`
+    command_out_fw_update_apply_t fw_update_apply;
   };
 } command_out_buffer_t;
 

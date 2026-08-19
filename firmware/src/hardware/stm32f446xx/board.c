@@ -193,6 +193,18 @@ uint32_t board_serial(char *buf) {
 
 uint32_t board_cycle_count(void) { return DWT->CYCCNT; }
 
+uint32_t board_usb_frame_number(void) {
+#if defined(BOARD_USB_FS)
+  const USB_OTG_GlobalTypeDef *usb = USB_OTG_FS;
+#else
+  const USB_OTG_GlobalTypeDef *usb = USB_OTG_HS;
+#endif
+  const USB_OTG_DeviceTypeDef *dev =
+      (const USB_OTG_DeviceTypeDef *)((uint32_t)usb + USB_OTG_DEVICE_BASE);
+
+  return (dev->DSTS & USB_OTG_DSTS_FNSOF) >> USB_OTG_DSTS_FNSOF_Pos;
+}
+
 //--------------------------------------------------------------------+
 // Interrupt Handlers
 //--------------------------------------------------------------------+
