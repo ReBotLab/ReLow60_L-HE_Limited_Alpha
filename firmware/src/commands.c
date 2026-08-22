@@ -108,6 +108,10 @@ void command_process(const uint8_t *buf) {
     polling_test_command(p->subcommand, p->window_ms, &out->polling_test);
     break;
   }
+  case COMMAND_SCAN_RATE: {
+    scan_rate_get(&out->scan_rate);
+    break;
+  }
   case COMMAND_SET_OPTIONS: {
     // The 3-bit `polling_rate` field can hold values that have no matching
     // enumerator, which would be written into the descriptor as an out-of-range
