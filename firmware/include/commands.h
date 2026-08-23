@@ -19,6 +19,7 @@
 #include "eeconfig.h"
 #include "iap.h"
 #include "polling_test.h"
+#include "scan_rate.h"
 #include "usb_descriptors.h"
 
 //--------------------------------------------------------------------+
@@ -55,6 +56,7 @@ typedef enum {
   // Numbered explicitly so that the polling test and the IAP commands can be
   // merged in either order without silently shifting the wire protocol.
   COMMAND_POLLING_TEST = 22,
+  COMMAND_SCAN_RATE,
 
   COMMAND_GET_KEYMAP = 128,
   COMMAND_SET_KEYMAP,
@@ -285,6 +287,8 @@ typedef struct __attribute__((packed)) {
     uint8_t switch_map[63];
     // For `COMMAND_POLLING_TEST`
     polling_test_result_t polling_test;
+    // For `COMMAND_SCAN_RATE`
+    scan_rate_t scan_rate;
     // For `COMMAND_GET_MACRO`
     uint8_t macro[63];
 

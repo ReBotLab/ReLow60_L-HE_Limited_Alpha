@@ -26,6 +26,7 @@
 #include "matrix.h"
 #include "measurement.h"
 #include "polling_test.h"
+#include "scan_rate.h"
 #ifdef OLED_ENABLED
 #include "oled_display.h"
 #endif
@@ -61,6 +62,7 @@ int main(void) {
   layout_init();
   command_init();
   polling_test_init();
+  scan_rate_init();
 
   tud_init(BOARD_TUD_RHPORT);
 
@@ -77,6 +79,8 @@ int main(void) {
       continue;
 
     measurement_task();
+
+    scan_rate_task();
 
     analog_task();
     matrix_scan();
