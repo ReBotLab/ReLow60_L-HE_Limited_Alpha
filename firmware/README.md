@@ -1,5 +1,9 @@
 # ReLow60 L-HE Firmware
 
+**ReLow60 L-HE** キーボード用のファームウェアです。[peppapighs/libhmk](https://github.com/peppapighs/libhmk) のフォークで、**GNU General Public License v3.0** の下で配布されます（[LICENSE](LICENSE) を参照）。
+
+ReLow60 固有の設定は [`keyboards/ReLow60/`](keyboards/ReLow60/) にあります。以下に続くのはオリジナルの libhmk ドキュメント（英語）です。
+
 This is the firmware for the **ReLow60 L-HE** keyboard, a fork of
 [peppapighs/libhmk](https://github.com/peppapighs/libhmk). It is distributed
 under the **GNU General Public License v3.0** (see [LICENSE](LICENSE)).
