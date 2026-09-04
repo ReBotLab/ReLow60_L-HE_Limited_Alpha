@@ -11,6 +11,7 @@
 # You should have received a copy of the GNU General Public License along with
 # this program. If not, see <https://www.gnu.org/licenses/>.
 
+import math
 import os
 from drivers import *
 from schema.keyboard import Keyboard
@@ -82,6 +83,24 @@ def to_slice_def(name: str, arr: list | bytes):
 # Get the ADC resolution, or default to the maximum resolution supported by the MCU
 def get_adc_resolution(kb_json: Keyboard, driver: Driver):
     return kb_json.analog.adc_resolution or driver.metadata.adc.max_resolution
+
+
+# Build an [ADC code, temperature in 0.1 C] table for an NTC voltage divider,
+# sorted by ADC code, for linear interpolation on the MCU. Both resistors see
+# the same supply the ADC uses as its reference, so the reading is ratiometric
+# and the supply voltage drops out.
+def ntc_adc_table(ntc, resolution: int) -> list[list[int]]:
+    adc_max = (1 << resolution) - 1
+    points = []
+    for t in range(-20, 85, 5):
+        r = ntc.r25 * math.exp(ntc.beta * (1 / (t + 273.15) - 1 / 298.15))
+        if ntc.ntc_to_vcc:
+            ratio = ntc.r_series / (r + ntc.r_series)
+        else:
+            ratio = r / (r + ntc.r_series)
+        points.append([round(adc_max * ratio), t * 10])
+    points.sort(key=lambda p: p[0])
+    return points
 
 
 # Resolve per-profile default keymaps

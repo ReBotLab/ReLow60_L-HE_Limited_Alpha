@@ -40,6 +40,23 @@
 // DMA state for non-blocking transfers
 static volatile bool dma_transfer_busy = false;
 
+// Wait for a DMA transfer in flight to finish. The flag is cleared by the STOP
+// interrupt, and a slave that stops clocking mid-transfer never produces that
+// STOP, so the wait is bounded: on timeout the transfer is torn down instead
+// of the firmware hanging here forever.
+static void i2c_wait_dma_idle(void) {
+  uint32_t start = DWT->CYCCNT;
+  while (dma_transfer_busy) {
+    if ((DWT->CYCCNT - start) > I2C_TIMEOUT_CYCLES) {
+      dma_channel_enable(DMA1_CHANNEL2, FALSE);
+      i2c_dma_enable(I2C1, I2C_DMA_REQUEST_TX, FALSE);
+      i2c_interrupt_enable(I2C1, I2C_STOP_INT, FALSE);
+      dma_transfer_busy = false;
+      break;
+    }
+  }
+}
+
 void oled_i2c_init(void) {
   crm_periph_clock_enable(CRM_GPIOB_PERIPH_CLOCK, TRUE);
   crm_periph_clock_enable(CRM_I2C1_PERIPH_CLOCK, TRUE);
@@ -89,8 +106,7 @@ void oled_i2c_write(uint8_t addr, const uint8_t *data, uint16_t len) {
     return;
 
   // Wait for any pending DMA transfer
-  while (dma_transfer_busy)
-    ;
+  i2c_wait_dma_idle();
 
   uint32_t timeout;
 
@@ -133,8 +149,7 @@ void oled_i2c_write_dma(uint8_t addr, const uint8_t *data, uint16_t len) {
     return;
 
   // Wait for any pending DMA transfer
-  while (dma_transfer_busy)
-    ;
+  i2c_wait_dma_idle();
 
   // Wait for bus idle
   uint32_t timeout = DWT->CYCCNT;

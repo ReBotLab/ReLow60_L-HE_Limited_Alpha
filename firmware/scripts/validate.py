@@ -41,3 +41,17 @@ for keymap in default_keymaps:
             raise ValueError(
                 f"Expected default keymaps to have {kb_json.keyboard.num_keys} keys"
             )
+
+# OLED tester layout inputs
+if kb_json.oled is not None and kb_json.oled.enabled:
+    oled = kb_json.oled
+    if oled.key_labels is not None:
+        if len(oled.key_labels) > kb_json.keyboard.num_keys:
+            raise ValueError("Expected at most num_keys OLED key labels")
+        for label in oled.key_labels:
+            if not 0 < len(label) <= 3:
+                raise ValueError(
+                    f"OLED key label '{label}' must be 1 to 3 characters"
+                )
+    if oled.ntc is not None and oled.ntc.key > kb_json.keyboard.num_keys:
+        raise ValueError("OLED NTC key is out of range")

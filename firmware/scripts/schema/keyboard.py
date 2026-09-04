@@ -132,10 +132,43 @@ class KeyboardActuation(BaseModel):
     actuation_point: int = Field(ge=0, le=255)
 
 
+# OLED display layout
+class KeyboardOLEDLayout(str, Enum):
+    # 3x3 key grid with an ADC column below it (Archetype09)
+    GRID3X3 = "grid3x3"
+    # Sensor tester: key grid taken from `layout.keymap`, a detail view of the
+    # last pressed key, overview pages while idle, optional NTC temperature
+    TESTER = "tester"
+
+
+# NTC thermistor read through a spare analog key as a voltage divider
+class KeyboardOLEDNTC(BaseModel):
+    # 1-based key index whose ADC reading is the divider midpoint
+    key: PositiveInt
+    # Beta constant of the thermistor (K)
+    beta: PositiveFloat = 3380
+    # Thermistor resistance at 25 C (ohm)
+    r25: PositiveFloat = 10000
+    # Fixed resistor of the divider (ohm)
+    r_series: PositiveFloat = 10000
+    # True when the thermistor sits between the supply and the midpoint with
+    # the fixed resistor to ground; false when the thermistor is on the ground
+    # side
+    ntc_to_vcc: bool = True
+
+
 # OLED Configuration
 class KeyboardOLED(BaseModel):
     # Enable OLED display support
     enabled: bool = False
+    layout: KeyboardOLEDLayout = KeyboardOLEDLayout.GRID3X3
+    # Short label per key, 1 to 3 characters, indexed by 0-based key (tester)
+    key_labels: list[str] | None = None
+    ntc: KeyboardOLEDNTC | None = None
+    # Tester: milliseconds without a key press before the overview pages cycle
+    idle_timeout_ms: PositiveInt = 5000
+    # Tester: milliseconds each overview page stays on screen
+    page_interval_ms: PositiveInt = 3000
 
 
 # keyboard.json Schema

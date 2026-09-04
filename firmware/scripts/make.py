@@ -168,7 +168,42 @@ if kb_json.actuation is not None:
 
 # OLED Configuration
 if kb_json.oled is not None and kb_json.oled.enabled:
+    oled = kb_json.oled
     build_flags.define("OLED_ENABLED")
+    build_flags.define(f"OLED_LAYOUT_{oled.layout.value.upper()}")
+    build_flags.define("OLED_IDLE_TIMEOUT_MS", oled.idle_timeout_ms)
+    build_flags.define("OLED_PAGE_INTERVAL_MS", oled.page_interval_ms)
+
+    if oled.key_labels is not None:
+        labels = ", ".join(f'"{label}"' for label in oled.key_labels)
+        build_flags.define("OLED_KEY_LABELS", f"{{{labels}}}")
+        build_flags.define("OLED_NUM_KEY_LABELS", len(oled.key_labels))
+
+    if oled.ntc is not None:
+        build_flags.define("OLED_NTC_KEY", oled.ntc.key - 1)
+        table = utils.ntc_adc_table(
+            oled.ntc, utils.get_adc_resolution(kb_json, driver)
+        )
+        build_flags.define("OLED_NTC_TABLE", utils.to_c_array(table))
+        build_flags.define("OLED_NTC_TABLE_LEN", len(table))
+
+    # Key grid for the tester layout: rows of 0-based key indices from
+    # `layout.keymap`, padded with -1 where a row is shorter than the widest.
+    # The NTC pseudo-key is not a physical key and is left out.
+    grid_rows = []
+    for row in kb_json.layout.keymap:
+        keys = [
+            k.key
+            for k in row
+            if oled.ntc is None or k.key != oled.ntc.key - 1
+        ]
+        if keys:
+            grid_rows.append(keys)
+    grid_cols = max(len(r) for r in grid_rows)
+    grid = [r + [-1] * (grid_cols - len(r)) for r in grid_rows]
+    build_flags.define("OLED_GRID_ROWS", len(grid))
+    build_flags.define("OLED_GRID_COLS", grid_cols)
+    build_flags.define("OLED_GRID", utils.to_c_array(grid))
 
 # Add source build flags
 env.Append(BUILD_FLAGS=build_flags.get_flags())
